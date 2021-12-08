@@ -91,28 +91,48 @@ let lifecycle_name lifecycle =
   | EV_RING_PAUSE -> "RING_PAUSE"
   | EV_RING_RESUME -> "RING_RESUME"
 
-let tracing_func () =
+let tracing_func path_pid () =
   let filename = Printf.sprintf "%d.json" (Unix.getpid ()) in
   let trace_file = open_out filename in
   Printf.fprintf trace_file "[";
-  let cursor = create_cursor None in
-  let runtime_begin domain_id ts phase =
-    Printf.fprintf trace_file "{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"B\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d}"
-      (runtime_phase_name phase) (Timestamp.of_int64 ts) (Obj.magic domain_id) (Obj.magic domain_id);
+  let cursor = create_cursor path_pid in
+  let ts_to_ms ts = Int64.(div (Timestamp.of_int64 ts) (of_int 1000)) in
+
+  let runtime_begin (domain_id : Domain.id) ts phase =
+    Printf.fprintf trace_file "{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"B\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d},\n"
+      (runtime_phase_name phase) (ts_to_ms ts) (domain_id :> int) (domain_id :> int);
     flush trace_file in
-  let runtime_end domain_id ts phase =
-    Printf.fprintf trace_file "{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"B\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d}"
-      (runtime_phase_name phase) (Timestamp.of_int64 ts) (Obj.magic domain_id) (Obj.magic domain_id);
+
+  let runtime_end (domain_id : Domain.id) ts phase =
+    Printf.fprintf trace_file "{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"E\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d},\n"
+      (runtime_phase_name phase) (ts_to_ms ts) (domain_id :> int) (domain_id :> int);
       flush trace_file in
-  let callbacks = Callbacks.create ~runtime_begin ~runtime_end () in
+
+  let runtime_counter (domain_id : Domain.id) ts counter value =
+    Printf.fprintf trace_file "%s %Ld\n" (runtime_counter_name counter) (ts_to_ms ts)
+    (*{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"i\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d, \"args\": {\"value\": %d}},\n"
+      (runtime_counter_name counter) (ts_to_ms ts) (domain_id :> int) (domain_id :> int) value;
+      flush trace_file *) in
+
+  let lifecycle (domain_id : Domain.id) ts l _ =
+    Printf.fprintf trace_file "{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"i\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d, \"s\": \"g\"},\n"
+      (lifecycle_name l) (ts_to_ms ts) (domain_id :> int) (domain_id :> int);
+      flush trace_file in
+
+  let callbacks = Callbacks.create ~runtime_begin ~runtime_end ~runtime_counter ~lifecycle () in
   while (Atomic.get tracing) do
     ignore(read_poll cursor callbacks None);
     Unix.sleep 1
   done
 
+let stop_trace_record () =
+  Atomic.set tracing false
+
+let start_trace_record path_pid =
+  ignore(Domain.spawn (tracing_func path_pid))
+
 let () =
-  tracing_func ();
-    while true do
-      Gc.minor ();
-      Unix.sleep 1
-    done
+  start_trace_record None;
+  while true do
+    Gc.full_major ()
+  done
