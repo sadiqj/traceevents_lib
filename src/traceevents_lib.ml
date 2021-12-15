@@ -90,13 +90,17 @@ let lifecycle_name lifecycle =
   | EV_RING_STOP -> "RING_STOP"
   | EV_RING_PAUSE -> "RING_PAUSE"
   | EV_RING_RESUME -> "RING_RESUME"
+  | EV_FORK_PARENT -> "FORK_PARENT"
+  | EV_FORK_CHILD -> "FORK_CHILD"
+  | EV_DOMAIN_SPAWN -> "DOMAIN_SPAWN"
+  | EV_DOMAIN_TERMINATE -> "DOMAIN_TERMINATE"
 
 let tracing_func path_pid () =
   let filename = Printf.sprintf "%d.json" (Unix.getpid ()) in
   let trace_file = open_out filename in
   Printf.fprintf trace_file "[";
   let cursor = create_cursor path_pid in
-  let ts_to_ms ts = Int64.(div (Timestamp.of_int64 ts) (of_int 1000)) in
+  let ts_to_ms ts = Int64.(div (Timestamp.to_int64 ts) (of_int 1000)) in
 
   let runtime_begin (domain_id : Domain.id) ts phase =
     Printf.fprintf trace_file "{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"B\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d},\n"
@@ -106,18 +110,18 @@ let tracing_func path_pid () =
   let runtime_end (domain_id : Domain.id) ts phase =
     Printf.fprintf trace_file "{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"E\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d},\n"
       (runtime_phase_name phase) (ts_to_ms ts) (domain_id :> int) (domain_id :> int);
-      flush trace_file in
+    flush trace_file in
 
   let runtime_counter (domain_id : Domain.id) ts counter value =
-    Printf.fprintf trace_file "%s %Ld\n" (runtime_counter_name counter) (ts_to_ms ts)
-    (*{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"i\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d, \"args\": {\"value\": %d}},\n"
+    Printf.fprintf trace_file
+      "{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"i\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d, \"args\": {\"value\": %d}},\n"
       (runtime_counter_name counter) (ts_to_ms ts) (domain_id :> int) (domain_id :> int) value;
-      flush trace_file *) in
+    flush trace_file in
 
   let lifecycle (domain_id : Domain.id) ts l _ =
     Printf.fprintf trace_file "{\"name\": \"%s\", \"cat\": \"PERF\", \"ph\":\"i\", \"ts\":%Ld, \"pid\": %d, \"tid\": %d, \"s\": \"g\"},\n"
       (lifecycle_name l) (ts_to_ms ts) (domain_id :> int) (domain_id :> int);
-      flush trace_file in
+    flush trace_file in
 
   let callbacks = Callbacks.create ~runtime_begin ~runtime_end ~runtime_counter ~lifecycle () in
   while (Atomic.get tracing) do
@@ -133,6 +137,7 @@ let start_trace_record path_pid =
 
 let () =
   start_trace_record None;
-  while true do
-    Gc.full_major ()
+  for _ = 1 to 30 do
+    Gc.full_major ();
+    Unix.sleepf 0.100
   done

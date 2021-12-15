@@ -1,6 +1,6 @@
 (env
   (dev
-    (flags (:standard -w -32 -w -27 -runtime-variant d))))
+    (flags (:standard -w -32 -w -27))))
 
 (executable
  (libraries unix)
